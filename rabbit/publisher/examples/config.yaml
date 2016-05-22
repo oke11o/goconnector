@@ -1,0 +1,5 @@
+url: "amqp://guest:guest@localhost:5672/"
+queue_name: "test"
+exchange_name: "test"
+exchange_type: "direct"
+routing_key: "test"
