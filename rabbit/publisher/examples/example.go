@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"strconv"
+	"sync"
 
 	"gopkg.in/yaml.v2"
 
@@ -14,10 +15,18 @@ func main() {
 	var config publisher.Config
 	readYaml(`config.yaml`, &config)
 
-	in := make(chan []byte)
-	done := make(chan bool)
+	in := make(chan []byte, 10000)
+	errs := make(chan error)
 
-	go publisher.Publish(in, done, 1, config)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go publisher.Publish(&wg, in, errs, 1, config)
+	go func(errs <-chan error) {
+		for e := range errs {
+			fmt.Println(e)
+		}
+	}(errs)
 
 	var body []byte
 	for i := 0; i < 50000; i++ {
@@ -26,9 +35,8 @@ func main() {
 		in <- body
 	}
 	close(in)
-	select {
-	case <-done:
-	}
+	fmt.Println("close.")
+	wg.Wait()
 	fmt.Println("Done script.")
 }
 

@@ -9,11 +9,8 @@ import (
 )
 
 // Publish is method for use in goroutines
-func Publish(in <-chan []byte, Done chan<- bool, goroutines int, config Config) {
-	defer func() {
-		Done <- true
-		close(Done)
-	}()
+func Publish(mainWg *sync.WaitGroup, in <-chan []byte, errs chan<- error, goroutines int, config Config) {
+	defer mainWg.Done()
 
 	done := make(chan bool, goroutines-1)
 	stop := make(chan bool, goroutines-1)
@@ -22,33 +19,32 @@ func Publish(in <-chan []byte, Done chan<- bool, goroutines int, config Config) 
 		close(stop)
 	}()
 
+	var conn connect
+	err := conn.Init(config)
+	if err != nil {
+		panic(err)
+	}
+	defer conn.close()
+
 	var wg sync.WaitGroup
 	for i := 0; i < goroutines; i++ {
+		c := conn.Copy()
 		wg.Add(1)
-		go func(wg *sync.WaitGroup, in <-chan []byte, stop, done chan bool, config Config) {
-			defer wg.Done()
-
-			var conn connect
-			conn.Init(config)
-			conn.setDone(done)
-			conn.setStop(stop)
-			defer conn.close()
+		go func(wg *sync.WaitGroup, in <-chan []byte, errs chan<- error, conn connect) {
+			defer func() {
+				wg.Done()
+				conn.close()
+			}()
 
 			for body := range in {
-				conn.publishMessage(body)
+				err := conn.publishMessage(body)
+				if err != nil {
+					errs <- err
+				}
 			}
 
-		}(&wg, in, stop, done, config)
+		}(&wg, in, errs, c)
 	}
-	go func(goroutines int, done <-chan bool, stop chan<- bool) {
-		select {
-		case <-done:
-			for i := 0; i < goroutines-1; i++ {
-				stop <- true
-			}
-		}
-
-	}(goroutines, done, stop)
 	wg.Wait()
 }
 
@@ -66,16 +62,6 @@ type connect struct {
 	connection   *amqp.Connection
 	channel      *amqp.Channel
 	confirmation chan amqp.Confirmation
-	done         chan bool
-	stop         chan bool
-}
-
-func (c *connect) setDone(done chan bool) {
-	c.done = done
-}
-
-func (c *connect) setStop(stop chan bool) {
-	c.stop = stop
 }
 
 func (c *connect) dial() (err error) {
@@ -108,8 +94,8 @@ func (c *connect) publishMessage(js []byte) error {
 	var successSend bool
 	for !successSend {
 
-		if err := c.publishMessageWrap(js); err != nil {
-			return fmt.Errorf(`Непредвиденная ошибка publishMessageWrap: %+v`, err)
+		if err := c.publishMessageInner(js); err != nil {
+			return fmt.Errorf(`Непредвиденная ошибка publishMessageInner: %+v`, err)
 		}
 
 		confirmed := <-c.confirmation
@@ -124,7 +110,7 @@ func (c *connect) publishMessage(js []byte) error {
 	return nil
 }
 
-func (c *connect) publishMessageWrap(body []byte) (err error) {
+func (c *connect) publishMessageInner(body []byte) (err error) {
 	err = c.channel.Publish(
 		c.config.ExchangeName, // publish to an exchange
 		c.config.RoutingKey,   // routing to 0 or more queues
