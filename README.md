@@ -17,5 +17,6 @@ Using
 
 	wg.Add(1)
 	go publisher.Publish(&wg, in, errs, 1, config)
+
     
 ```
