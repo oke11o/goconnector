@@ -64,38 +64,14 @@ type connect struct {
 	confirmation chan amqp.Confirmation
 }
 
-func (c *connect) dial() (err error) {
-	c.connection, err = amqp.Dial(c.config.URL)
-	return
-}
-
-func (c *connect) checkDefaultConfig() {
-	if c.config.ExchangeType == `` {
-		c.config.ExchangeType = `direct`
-	}
-}
-
-// Init is method
-func (c *connect) Init(Config Config) error {
-	c.config = Config
-	c.checkDefaultConfig()
-	err := c.init()
-	return err
-}
-
-// Copy is method
-func (c *connect) Copy() (copy connect) {
-	copy.config = c.config
-	copy.init()
-	return
-}
-
 func (c *connect) publishMessage(js []byte) error {
 	var successSend bool
 	for !successSend {
 
 		if err := c.publishMessageInner(js); err != nil {
-			return fmt.Errorf(`Непредвиденная ошибка publishMessageInner: %+v`, err)
+			if err := c.reinit(); err != nil {
+				return fmt.Errorf(`Непредвиденная ошибка reinit после publishMessageInner: %+v`, err)
+			}
 		}
 
 		confirmed := <-c.confirmation
@@ -126,6 +102,32 @@ func (c *connect) publishMessageInner(body []byte) (err error) {
 			// a bunch of application/implementation-specific fields
 		},
 	)
+	return
+}
+
+func (c *connect) dial() (err error) {
+	c.connection, err = amqp.Dial(c.config.URL)
+	return
+}
+
+func (c *connect) checkDefaultConfig() {
+	if c.config.ExchangeType == `` {
+		c.config.ExchangeType = `direct`
+	}
+}
+
+// Init is method
+func (c *connect) Init(Config Config) error {
+	c.config = Config
+	c.checkDefaultConfig()
+	err := c.init()
+	return err
+}
+
+// Copy is method
+func (c *connect) Copy() (copy connect) {
+	copy.config = c.config
+	copy.init()
 	return
 }
 
